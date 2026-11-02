@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { withBase } from 'vitepress'
+import { isOnline, getToken, onlineAppendNote, onlineUploadImage } from '../githubApi'
 
 // 全部主题的学习笔记文件（相对 docs/ 的路径）
 const topics = [
@@ -15,8 +16,8 @@ const title = ref('')
 const body = ref('')
 const status = ref('')
 const saving = ref(false)
-// 线上（GitHub Pages）没有本地 API，仅在本地 dev 环境可写
-const isDev = import.meta.env.DEV
+// 线上写走 GitHub API，本地写走 /__notes 接口
+const isProd = isOnline()
 
 // 截图粘贴：自动上传并在光标处插入图片引用
 async function onPaste(event: ClipboardEvent) {
@@ -24,22 +25,33 @@ async function onPaste(event: ClipboardEvent) {
   if (!file) return
   event.preventDefault()
   status.value = '正在上传截图…'
-  const dataBase64 = await new Promise<string>((resolvePromise) => {
+  const dataUrl = await new Promise<string>((resolvePromise) => {
     const reader = new FileReader()
-    reader.onload = () => resolvePromise(String(reader.result).split(',')[1])
+    reader.onload = () => resolvePromise(String(reader.result))
     reader.readAsDataURL(file)
   })
-  const ext = file.type.split('/')[1] || 'png'
-  const resp = await fetch('/__notes/upload', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ dataBase64, ext }),
-  }).then(r => r.json())
-  if (resp.url) {
-    body.value += `\n\n![截图说明](${resp.url})\n\n`
-    status.value = '截图已插入正文，保存后生效'
-  } else {
-    status.value = `截图上传失败：${resp.error || '未知错误'}`
+  try {
+    if (isOnline()) {
+      const url = await onlineUploadImage(dataUrl)
+      body.value += `\n\n![截图说明](${url})\n\n`
+      status.value = '截图已提交（发布后才能看到图片）'
+      return
+    }
+    const dataBase64 = dataUrl.split(',')[1]
+    const ext = file.type.split('/')[1] || 'png'
+    const resp = await fetch('/__notes/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dataBase64, ext }),
+    }).then(r => r.json())
+    if (resp.url) {
+      body.value += `\n\n![截图说明](${resp.url})\n\n`
+      status.value = '截图已插入正文，保存后生效'
+    } else {
+      status.value = `截图上传失败：${resp.error || '未知错误'}`
+    }
+  } catch (err) {
+    status.value = `截图上传失败：${err}`
   }
 }
 
@@ -51,6 +63,15 @@ async function save() {
   saving.value = true
   status.value = '保存中…'
   try {
+    if (isOnline()) {
+      if (!getToken()) {
+        status.value = '请先在页面顶部「连接 GitHub」填入令牌'
+        return
+      }
+      await onlineAppendNote(selected.value, title.value.trim(), body.value)
+      status.value = 'saved-online'
+      return
+    }
     const resp = await fetch('/__notes/append', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -62,7 +83,7 @@ async function save() {
       status.value = `保存失败：${resp.error || '未知错误'}`
     }
   } catch (err) {
-    status.value = `保存失败：${err}（请确认 dev 服务正在运行）`
+    status.value = `保存失败：${err}`
   } finally {
     saving.value = false
   }
@@ -77,10 +98,6 @@ function reset() {
 
 <template>
   <div class="note-editor">
-    <div v-if="!isDev" class="editor-status">
-      线上版为只读：写笔记只在你自己电脑上运行站点（<code>npm run docs:dev</code>）时可用。想直接看笔记内容，进各主题的「学习笔记」页即可。
-    </div>
-    <template v-else>
     <div class="editor-field">
       <label>记到哪个主题？</label>
       <select v-model="selected">
@@ -111,7 +128,11 @@ function reset() {
       <a class="study-button ghost" :href="withBase('/' + selected.replace(/\.md$/, ''))" target="_blank">打开该主题笔记页 ↗</a>
     </div>
 
-    <p v-if="status === 'saved'" class="editor-status ok">
+    <p v-if="status === 'saved-online'" class="editor-status ok">
+      已提交到 GitHub！大约 1-2 分钟后网站重新发布完成，刷新本页即可看到这篇笔记。
+      <a href="javascript:void 0" @click="reset">再写一篇 →</a>
+    </p>
+    <p v-else-if="status === 'saved'" class="editor-status ok">
       已保存！笔记追加到了文件末尾，点上方「打开该主题笔记页」即可看到（若未出现请刷新）。
       <a href="javascript:void 0" @click="reset">再写一篇 →</a>
     </p>
@@ -119,8 +140,7 @@ function reset() {
 
     <details class="editor-help">
       <summary>保存到哪里了？和后台编辑是什么关系？</summary>
-      <p>这个页面只是把内容追加到对应主题的 <code>01-学习笔记.md</code> 文件末尾，和你用编辑器打开文件手写完全等价，两边可以随时混用。截图会存到 <code>docs/public/assets/notes/</code> 并在正文插入图片引用。此功能依赖本地 dev 服务，仅在 <code>npm run docs:dev</code> 运行时可用。</p>
+      <p>这个页面只是把内容追加到对应主题的 <code>01-学习笔记.md</code> 文件末尾，和你用编辑器打开文件手写完全等价，两边可以随时混用。截图会存到 <code>docs/public/assets/notes/</code> 并在正文插入图片引用。本地运行时直接写文件；线上运行时通过 GitHub API 提交并自动重新发布。</p>
     </details>
-    </template>
   </div>
 </template>

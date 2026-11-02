@@ -124,12 +124,17 @@ const loop = [
             <span>记在「01-架构原理 · 学习笔记」里，页面里已备好示范和空白模板</span>
           </li>
           <li>
+            <b>每看完一课，做 5 道题</b>
+            <span><a :href="withBase('/guide/自检测验')">自检测验</a>随机抽题考你，答不上的自动进复习池——这就是「学到位了没」的答案</span>
+          </li>
+          <li>
             <b>每天开场 15 分钟复习池</b>
             <span>前一天答不上来的问题，第二天先回忆一遍再学新的——对抗遗忘的关键动作</span>
           </li>
         </ol>
         <div class="finish-actions">
           <a class="study-button primary" :href="withBase('/doris/01-架构原理/00-素材清单')">进入 01 架构原理主题 →</a>
+          <a class="study-button ghost" :href="withBase('/guide/自检测验')">考一考（5 题）</a>
           <a class="study-button ghost" :href="withBase('/guide/学习流程')">今日学习流程 SOP</a>
         </div>
       </div>

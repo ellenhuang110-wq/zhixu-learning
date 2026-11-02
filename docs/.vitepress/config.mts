@@ -75,6 +75,7 @@ export default defineConfig({
         { text: '学习计划与里程碑', link: '/guide/学习计划' },
       ] },
       { text: '更多', items: [
+        { text: '自检测验（考考自己）', link: '/guide/自检测验' },
         { text: '更新学习进度', link: '/guide/学习进度' },
         { text: '写笔记（网页版）', link: '/guide/写笔记' },
         { text: '学习资料', link: '/resources/素材总索引' },
@@ -100,6 +101,7 @@ export default defineConfig({
         { text: '使用说明', link: '/guide/使用说明' },
         { text: '每日学习流程 SOP', link: '/guide/学习流程' },
         { text: '学习计划与复习机制', link: '/guide/学习计划' },
+        { text: '自检测验（考考自己）', link: '/guide/自检测验' },
         { text: '更新学习进度', link: '/guide/学习进度' },
         { text: '写笔记（网页版）', link: '/guide/写笔记' },
       ],

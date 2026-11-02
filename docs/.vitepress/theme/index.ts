@@ -6,6 +6,8 @@ import QueryFlow from './components/QueryFlow.vue'
 import KnowledgeCheck from './components/KnowledgeCheck.vue'
 import NoteEditor from './components/NoteEditor.vue'
 import MaterialTracker from './components/MaterialTracker.vue'
+import GithubConnect from './components/GithubConnect.vue'
+import QuizPanel from './components/QuizPanel.vue'
 import './style.css'
 
 export default {
@@ -17,5 +19,7 @@ export default {
     app.component('KnowledgeCheck', KnowledgeCheck)
     app.component('NoteEditor', NoteEditor)
     app.component('MaterialTracker', MaterialTracker)
+    app.component('GithubConnect', GithubConnect)
+    app.component('QuizPanel', QuizPanel)
   },
 } satisfies Theme
