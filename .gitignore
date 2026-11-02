@@ -1,0 +1,18 @@
+# Node
+node_modules/
+docs/.vitepress/cache/
+docs/.vitepress/dist/
+
+# 本地烧录视频（大文件不进 git，存内网盘）
+media/
+
+# 系统文件
+Thumbs.db
+.DS_Store
+
+# 日志
+*.log
+
+# 编辑器
+.vscode/
+.idea/
