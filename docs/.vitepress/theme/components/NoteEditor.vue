@@ -15,6 +15,8 @@ const title = ref('')
 const body = ref('')
 const status = ref('')
 const saving = ref(false)
+// 线上（GitHub Pages）没有本地 API，仅在本地 dev 环境可写
+const isDev = import.meta.env.DEV
 
 // 截图粘贴：自动上传并在光标处插入图片引用
 async function onPaste(event: ClipboardEvent) {
@@ -75,6 +77,10 @@ function reset() {
 
 <template>
   <div class="note-editor">
+    <div v-if="!isDev" class="editor-status">
+      线上版为只读：写笔记只在你自己电脑上运行站点（<code>npm run docs:dev</code>）时可用。想直接看笔记内容，进各主题的「学习笔记」页即可。
+    </div>
+    <template v-else>
     <div class="editor-field">
       <label>记到哪个主题？</label>
       <select v-model="selected">
@@ -115,5 +121,6 @@ function reset() {
       <summary>保存到哪里了？和后台编辑是什么关系？</summary>
       <p>这个页面只是把内容追加到对应主题的 <code>01-学习笔记.md</code> 文件末尾，和你用编辑器打开文件手写完全等价，两边可以随时混用。截图会存到 <code>docs/public/assets/notes/</code> 并在正文插入图片引用。此功能依赖本地 dev 服务，仅在 <code>npm run docs:dev</code> 运行时可用。</p>
     </details>
+    </template>
   </div>
 </template>

@@ -15,6 +15,8 @@ const selected = ref('doris/01-架构原理/00-素材清单.md')
 const items = ref<Item[]>([])
 const loading = ref(false)
 const message = ref('')
+// 线上（GitHub Pages）没有本地 API，仅在本地 dev 环境可写
+const isDev = import.meta.env.DEV
 
 async function load() {
   loading.value = true
@@ -50,11 +52,17 @@ async function updateStatus(item: Item) {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  if (isDev) load()
+})
 </script>
 
 <template>
   <div class="tracker">
+    <div v-if="!isDev" class="editor-status">
+      线上版为只读：更新素材进度只在你自己电脑上运行站点（<code>npm run docs:dev</code>）时可用。线上看进度，直接看各主题的「素材清单」页即可。
+    </div>
+    <template v-else>
     <div class="editor-field">
       <label>更新哪个主题的素材进度？</label>
       <select v-model="selected" @change="load">
@@ -90,5 +98,6 @@ onMounted(load)
       <summary>状态改了之后会怎样？</summary>
       <p>会直接改写该主题「素材清单」里对应行的问题状态格，和手动编辑文件等价。刷新素材清单页即可看到变化。只收录标准状态「未开始 / 学习中 / 已学完」；若某条素材已带「过时风险」等标记，选完状态后建议去确认一下备注列是否完好。</p>
     </details>
+    </template>
   </div>
 </template>
