@@ -69,6 +69,8 @@ function finish() {
   history.value = [rec, ...history.value].slice(0, 20)
   localStorage.setItem(SCORE_KEY, JSON.stringify(history.value))
   phase.value = 'done'
+  // 交卷时自动把错题收进复习池（无需手动点按钮）
+  addWrongToPool()
 }
 
 const wrongs = computed(() => results.value.filter(r => r.ratio < 0.6))
@@ -207,8 +209,11 @@ onMounted(() => {
           </tr>
         </tbody>
       </table>
+      <p v-if="wrongs.length" class="editor-status">
+        已自动把 {{ wrongs.length }} 道错题收进复习池 —— 就在本页最下方，每天开场抽 3 道复习。
+      </p>
+      <p v-else class="editor-status ok">全对！复习池没有新增错题。</p>
       <div class="editor-actions">
-        <button v-if="wrongs.length" class="study-button primary" @click="addWrongToPool">把 {{ wrongs.length }} 道错题加入复习池</button>
         <button class="study-button ghost" @click="retry">再考一次</button>
       </div>
     </template>
