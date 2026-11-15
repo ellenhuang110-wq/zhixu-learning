@@ -108,6 +108,7 @@ export default defineConfig({
       '/doris/': [
         { text: '零基础原理课 · 从这里开始', link: '/learn/01-database' },
         { text: '完整知识地图', link: '/doris/00-知识地图' },
+        { text: '部署照做清单 · 零基础 1FE+1BE', link: '/doris/02-部署与变更/04-安装部署照做清单' },
         ...topicSections('doris', dorisTopics),
       ],
       '/vector/': [
