@@ -1,6 +1,7 @@
 # 本机部署方案 · CentOS 7.9 / 192.168.16.24（1FE+1BE）
 
-> 目标机器：`srvalcyuatvdbs001`，CentOS 7.9.2009，IP `192.168.16.24/24`（网卡 ens192），内存约 16 GB，`/data` 剩余 43 GB。
+> 目标机器：`srvalcyuatvdbs001`，CentOS 7.9.2009，IP `192.168.16.24/24`（网卡 ens192），内存约 16 GB。
+> **同机已有**：MySQL 5.7（数据在 `/data/mysql_57`，占 58 GB）、三个看板脚本（`/opt/asset-dashboard`、`/opt/host-dashboard`、`/opt/net-dashboard`）、Percona XtraBackup（`/opt/xtrabackup`）。
 > 通用原理与每条命令的依据见 [安装部署照做清单](/doris/02-部署与变更/04-安装部署照做清单)；**本文只写这台机器要执行的命令、填好的参数和它会踩的雷。**
 
 ---
@@ -14,12 +15,15 @@
 | 操作系统 | CentOS 7.9 | CentOS 7+ / Ubuntu 22.04+ | 满足（但见雷区 1、2） |
 | CPU | 待确认 | 支持 AVX2 | **必须验证** |
 | 内存 | 约 16 GB | 测试：FE 8G + BE 16G | 偏紧，够跑实验 |
-| 磁盘 | `/data` 剩 43 GB | 测试：BE 50G+ | 偏紧，数据别超 20 GB |
+| 磁盘 | `/` 剩 41 GB；`/data` 剩 43 GB，但其中 58 GB 是 MySQL | 测试：BE 50G+ | **Doris 全部放 `/`，与 MySQL 分区分开**（见 0.3） |
 | JDK | 系统大概率是 1.8 | **17+** | 必须另装（雷区 3） |
 | glibc | 2.17（CentOS 7 上限） | 官方未明写最低版本 | 有风险（雷区 2） |
 
 ::: warning 装之前先确认一件事
-这台机器上跑着 `net-dashboard`（你当前就在它的目录里）。Doris 起来后会常驻占用 **4–8 GB 内存** 和 8 个端口。如果这是别人在用的 UAT 看板机，先跟负责人打个招呼，或者确认它只是闲置的测试机。
+这台机器不是空的：MySQL 5.7 + 3 个看板 + xtrabackup 都在跑。Doris 起来后会常驻占用 **6–8 GB 内存**和 8 个端口。
+- 内存要跟 MySQL 抢：先用 0.1 第 1b 段看 mysqld 实际占多少；
+- 磁盘要跟 MySQL 分开：**Doris 完全放 `/`，绝不进 `/data`**（原因见 0.3）；
+- 如果这是别人在用的 UAT 库/看板机，先跟负责人确认。
 :::
 
 ### 0.1 一次性体检（8 条，全部粘贴执行）
@@ -27,6 +31,9 @@
 ```bash
 echo "===== 1. CPU / 内存 ====="
 nproc; free -g; grep -o 'avx2' /proc/cpuinfo | head -1
+echo "===== 1b. 现有 MySQL / 看板占用 ====="
+ps -eo rss,args | grep -E 'mysqld|dashboard' | grep -v grep | awk '{printf "%.1fG %s\n", $1/1048576, $2}'
+du -sh /data/mysql_57; du -sh /opt/*dashboard 2>/dev/null
 echo "===== 2. glibc ====="
 ldd --version | head -1
 echo "===== 3. 系统与安全 ====="
@@ -53,13 +60,14 @@ ps -ef | grep -E 'java|nginx|python' | grep -v grep | head -10
 | `grep avx2` **无输出** | 不支持 AVX2 | 下载页改选 **x64 (no avx2)** 包，否则进程直接崩 |
 | `glibc` 显示 `2.17` | CentOS 7 上限 | 照常做，但做好雷区 2 的心理准备 |
 | `getenforce` = `Enforcing` | SELinux 开着 | 按 1.2 处理 |
+| 第 1b 段 mysqld 占用 > 6 G | 内存本来就紧 | FE 降到 `-Xmx2g`、BE `mem_limit=25%`，或换机器 |
 | 第 6 段有输出 | 端口被占 | **停下**，先确认是哪个服务，换端口或换机器 |
 | 第 7 段两条都是 `HTTP/1.1 200` 或 `302` | 能直接下包 | 走在线流程 |
 | 第 7 段超时/连不上 | 内网机器无外网 | 走 0.2 离线传包 |
 
 ### 0.2 如果机器不能上外网（内网常见）
 
-在能上网的电脑上下这三个文件，用 WinSCP / Xftp / `scp` 传到 `/data/soft/`：
+在能上网的电脑上下这三个文件，用 WinSCP / Xftp / `scp` 传到 `/opt/doris/soft/`：
 
 | 文件 | 大小 | 地址 |
 |---|---|---|
@@ -69,8 +77,38 @@ ps -ef | grep -E 'java|nginx|python' | grep -v grep | head -10
 
 ```bash
 # 在目标机上（如果中间有跳板机）
-scp apache-doris-4.0.8-bin-x64.tar.gz doris@<跳板机>:/data/soft/
+scp apache-doris-4.0.8-bin-x64.tar.gz doris@<跳板机>:/opt/doris/soft/
 ```
+
+### 0.3 和 MySQL / 3 个看板共存的目录方案（重要）
+
+**结论：Doris 全部放 `/opt/doris`（根分区），一个字节都不放 `/data`。**
+
+| 目录 | 放什么 | 为什么放这 |
+|---|---|---|
+| `/opt/doris/soft/` | 安装包（3.8 G，装完删） | 根分区有 41 G，装完即删 |
+| `/opt/doris/apache-doris-4.0.8-bin-x64/` | 程序（fe/be） | 与看板同级但不冲突，升级只换这个目录 |
+| `/opt/doris/meta/` | FE 元数据 | 与 BE 数据分目录，方便单独备份 |
+| `/opt/doris/storage/` | BE 数据（**上限 15 G**） | 与 MySQL 分属不同挂载点 |
+
+**为什么不能放 `/data`**（这台机器最关键的一条）：
+
+1. `/data` 现在 58 GB 是 MySQL 的数据，而且还会继续长；
+2. BE 的磁盘水位是**按整个挂载点算的**——`/data` 被 MySQL 涨到 85%，Doris 会先停止写入和均衡（它看的是分区，不是你那个目录）；
+3. `xtrabackup` 全量备份也会临时吃空间，那一刻 `/data` 的峰值不可控，背锅的是 Doris。
+
+放在 `/` 上，`/data` 怎么涨都影响不到 Doris；代价是根分区要留余量，所以 BE 数据必须人为限在 15 G 以内。
+
+**空间预算（根分区 41 G 可用）**：
+
+| 项 | 占用 | 说明 |
+|---|---|---|
+| 安装包 | 3.8 G | 解压校验完就 `rm` |
+| 程序解压后 | 约 2 G | fe + be |
+| FE 元数据 | 1–2 G | |
+| BE 数据 | **≤ 15 G** | 建表时按需 `drop` |
+| FE/BE 日志 | 1–2 G | 定期清理 `log/` |
+| 合计 | 约 22 G | 留 19 G 给系统和 3 个看板 |
 
 ---
 
@@ -109,7 +147,7 @@ systemctl stop firewalld && systemctl disable firewalld
 getenforce        # 期望：Permissive
 ```
 
-**为什么这台机必须关 SELinux**：CentOS 7 默认 `Enforcing`，BE 读写 `/data/doris-storage` 会被拦，表现为"进程起了但 Alive=false，日志里没明显错误"——这是这台机器最隐蔽的雷。
+**为什么这台机必须关 SELinux**：CentOS 7 默认 `Enforcing`，BE 读写 `/opt/doris/storage` 会被拦，表现为"进程起了但 Alive=false，日志里没明显错误"——这是这台机器最隐蔽的雷。
 
 ### 1.3 内核与句柄（一次执行完）
 
@@ -140,19 +178,17 @@ systemctl enable --now chronyd
 chronyc tracking | head -3      # 期望：Leap status : Normal
 ```
 
-### 1.5 建 doris 用户与四个目录
+### 1.5 建 doris 用户与目录（全在 `/opt/doris`）
 
 ```bash
 useradd -m -s /bin/bash doris
 echo 'Doris@2026' | passwd --stdin doris
-mkdir -p /data/soft /data/doris /data/doris-meta /data/doris-storage
-chown -R doris:doris /data/soft /data/doris /data/doris-meta /data/doris-storage
-df -h /data
+mkdir -p /opt/doris/soft /opt/doris/meta /opt/doris/storage
+chown -R doris:doris /opt/doris
+df -h / /data
 ```
 
-**为什么全放 `/data`**：`/` 只剩 41 G，而安装包 3.8 G + 解压约 3 G，再放元数据会把根分区吃紧；`/data` 有独立卷，清理也方便。
-
-**空间预算（43 G 可用）**：安装包 3.8 G + 解压 3 G + JDK 0.3 G + 元数据 1–2 G → **留给 BE 数据约 30 G**，实际写完 30 G 后 BE 会拒绝写入（默认水位 85%）。
+**动手前再确认一遍**：`/opt/doris` 是新建目录，和三个看板平级但互不影响；**不要动 `mysql_57`，也不要往 `/data` 写任何 Doris 文件**。
 
 ---
 
@@ -165,7 +201,7 @@ CentOS 7 的 yum 源里**最高只有 java-11**，`yum install java-17-openjdk` 
 ### 2.2 用 Corretto 17（Amazon 官方，兼容 glibc 2.17）
 
 ```bash
-cd /data/soft
+cd /opt/doris/soft
 curl -LO https://corretto.aws/downloads/latest/amazon-corretto-17-x64-linux-jdk.tar.gz
 mkdir -p /usr/local/jdk17
 tar -xzf amazon-corretto-17-x64-linux-jdk.tar.gz -C /usr/local/jdk17 --strip-components=1
@@ -182,7 +218,7 @@ OpenJDK Runtime Environment Corretto-17.0.x...
 备选（Adoptium Temurin，效果一样）：
 
 ```bash
-curl -L -o /data/soft/temurin17.tar.gz "https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jdk/hotspot/normal/eclipse"
+curl -L -o /opt/doris/soft/temurin17.tar.gz "https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jdk/hotspot/normal/eclipse"
 ```
 
 **记住这个路径**：`JAVA_HOME = /usr/local/jdk17`（两个配置文件都要写它）。
@@ -192,7 +228,7 @@ curl -L -o /data/soft/temurin17.tar.gz "https://api.adoptium.net/v3/binary/lates
 ## 3. 下载、校验、解压 Doris
 
 ```bash
-cd /data/soft
+cd /opt/doris/soft
 wget -c https://apache-doris-releases.oss-accelerate.aliyuncs.com/apache-doris-4.0.8-bin-x64.tar.gz
 wget -c https://apache-doris-releases.oss-accelerate.aliyuncs.com/apache-doris-4.0.8-bin-x64.tar.gz.sha512
 
@@ -203,9 +239,10 @@ cat apache-doris-4.0.8-bin-x64.tar.gz.sha512
 **两个哈希必须一致**。下载中断就重跑同一条 `wget -c` 命令续传。
 
 ```bash
-tar -xzf apache-doris-4.0.8-bin-x64.tar.gz -C /data/doris
-chown -R doris:doris /data/doris
-ls /data/doris/apache-doris-4.0.8-bin-x64     # 期望看到 fe  be
+tar -xzf apache-doris-4.0.8-bin-x64.tar.gz -C /opt/doris
+chown -R doris:doris /opt/doris
+rm -f apache-doris-4.0.8-bin-x64.tar.gz    # 3.8 G，校验通过就删，根分区宝贵
+ls /opt/doris/apache-doris-4.0.8-bin-x64     # 期望看到 fe  be
 su - doris                                    # 切到 doris，后面都在这个身份下
 ```
 
@@ -217,26 +254,26 @@ su - doris                                    # 切到 doris，后面都在这�
 
 ## 4. 部署 FE（参数已按本机填好）
 
-### 4.1 改 `/data/doris/apache-doris-4.0.8-bin-x64/fe/conf/fe.conf`
+### 4.1 改 `/opt/doris/apache-doris-4.0.8-bin-x64/fe/conf/fe.conf`
 
 ```properties
 JAVA_HOME = /usr/local/jdk17
 priority_networks = 192.168.16.0/24
-meta_dir = /data/doris-meta
+meta_dir = /opt/doris/meta
 lower_case_table_names = 1
-JAVA_OPTS = -Xmx4096m -XX:+UseG1GC
+JAVA_OPTS = -Xmx3072m -XX:+UseG1GC
 ```
 
 ::: warning 三个不能写错的地方
 1. `priority_networks` 写 **`192.168.16.0/24`**，不是 `192.168.16.24/24`，也不是 `24.0`——要的是**网段**；
 2. `JAVA_OPTS` 要在**原有那一行上改**，不要新增第二行（`fe.conf` 里本来就有这行，`grep -n JAVA_OPTS conf/fe.conf` 确认只剩一条）；
-3. `-Xmx4096m` 是给这台 16 G 机器的值，别再往上加，BE 和 net-dashboard 还要用内存。
+3. `-Xmx3072m` 是给这台 16 G 机器的值（MySQL 还要占 4–8 G），**别再往上加**。
 :::
 
 ### 4.2 启动并验证
 
 ```bash
-cd /data/doris/apache-doris-4.0.8-bin-x64/fe
+cd /opt/doris/apache-doris-4.0.8-bin-x64/fe
 bin/start_fe.sh --daemon
 sleep 5
 ss -lntp | grep -E '9030|8030'
@@ -270,16 +307,20 @@ SHOW FRONTENDS\G
 
 ## 5. 部署 BE
 
-### 5.1 改 `/data/doris/apache-doris-4.0.8-bin-x64/be/conf/be.conf`
+### 5.1 改 `/opt/doris/apache-doris-4.0.8-bin-x64/be/conf/be.conf`
 
 ```properties
 JAVA_HOME = /usr/local/jdk17
 priority_networks = 192.168.16.0/24
-storage_root_path = /data/doris-storage,medium:HDD
-mem_limit = 50%
+storage_root_path = /opt/doris/storage,medium:HDD
+mem_limit = 30%
 ```
 
-`mem_limit = 50%` 是这台 16 G 机器的关键：BE 默认按 80% 吃内存（约 12.8 G），加上 FE 4 G，机器会被撑满，net-dashboard 可能被 OOM 掉。
+`mem_limit = 30%`（约 4.8 G）是这台 16 G 机器的关键：BE 默认按 80% 吃内存（约 12.8 G），加上 FE 3 G 和 MySQL，机器会被撑满，看板或 mysqld 会被 OOM 掉。
+
+::: warning 数据目录上限要自己盯
+`/opt/doris/storage` 放的是 BE 数据，**建议不超过 15 G**。BE 的磁盘水位看的是整个根分区（共 41 G 可用），根分区被日志或其他文件涨满时，Doris 自己也会停写。每周 `df -h /` 看一眼。
+:::
 
 ### 5.2 注册 BE（在 FE 的 mysql 会话里）
 
@@ -292,7 +333,7 @@ ALTER SYSTEM ADD BACKEND "192.168.16.24:9050";
 ### 5.3 启动 BE 并验证
 
 ```bash
-cd /data/doris/apache-doris-4.0.8-bin-x64/be
+cd /opt/doris/apache-doris-4.0.8-bin-x64/be
 bin/start_be.sh --daemon
 sleep 10
 ss -lntp | grep -E '9050|9060|8040|8060'
@@ -346,8 +387,9 @@ SET PASSWORD = PASSWORD('Doris@2026#Uat');
 | 3 | **yum 里没有 JDK 17** | `No package java-17-openjdk available` | 按第 2 节用 Corretto/Temurin 压缩包 |
 | 4 | **CentOS 7 已 EOL，yum 源 404** | 连 `yum install mariadb` 都失败 | 1.1 节先换阿里云/vault 源 |
 | 5 | **8030/8040 被看板或其他服务占用** | FE/BE 起不来，`Address already in use` | 体检第 6 段先查；冲突就改端口（`http_port`/`webserver_port`） |
-| 6 | **内存 16 G 全被吃掉** | 同机的 net-dashboard 被 OOM | FE `-Xmx4096m` + BE `mem_limit=50%`，不要用默认值 |
-| 7 | **`/data` 只剩 43 G** | 写入 30 G 后 BE 拒写，报磁盘水位告警 | 只做实验；数据量控制、定期 `drop` 旧表 |
+| 6 | **内存 16 G 被三家抢** | MySQL、看板、Doris 互相 OOM | FE `-Xmx3072m` + BE `mem_limit=30%`；起完看 `free -g` 确认还有 2 G 余量 |
+| 7 | **把 Doris 数据放 `/data`（与 MySQL 同分区）** | MySQL 涨到 85%，Doris 先停写、停均衡；备份峰值时更危险 | 全部放 `/opt/doris`，数据目录限 15 G（见 0.3） |
+| 7b | **动了 `/data/mysql_57`** | MySQL 直接挂，UAT 库没得救 | 只读不写；不要把 Doris 的 `storage_root_path` 指到任何 `mysql` 相关目录 |
 | 8 | **`priority_networks` 写成 IP 而不是网段** | BE 永远注册不上 | 写 `192.168.16.0/24` |
 | 9 | **建表忘写副本数 1** | `Failed to find enough host` | 所有建表语句加 `PROPERTIES("replication_num"="1")` |
 | 10 | **用 root 跑 Doris** | 文件权限锁死，升级/迁移时各种 Permission denied | 建 `doris` 用户，`chown -R doris:doris` |
@@ -360,14 +402,14 @@ SET PASSWORD = PASSWORD('Doris@2026#Uat');
 
 ```bash
 # 1) 先停服务
-/data/doris/apache-doris-4.0.8-bin-x64/be/bin/stop_be.sh
-/data/doris/apache-doris-4.0.8-bin-x64/fe/bin/stop_fe.sh
+/opt/doris/apache-doris-4.0.8-bin-x64/be/bin/stop_be.sh
+/opt/doris/apache-doris-4.0.8-bin-x64/fe/bin/stop_fe.sh
 
 # 2) 再从 FE 元数据里摘掉节点（如果 FE 还能连）
 mysql -uroot -P9030 -h127.0.0.1 -p -e 'ALTER SYSTEM DROP BACKEND "192.168.16.24:9050";'
 
 # 3) 删目录与用户
-rm -rf /data/doris /data/doris-meta /data/doris-storage
+rm -rf /opt/doris
 userdel -r doris
 ```
 
@@ -384,9 +426,10 @@ userdel -r doris
 ```markdown
 ## 2026-11-XX · 本机首次部署 4.0.8（192.168.16.24，CentOS 7.9）
 
-- 配置：1FE+1BE 同机；FE -Xmx4G；BE mem_limit 50%；数据在 /data
+- 配置：1FE+1BE 同机；FE -Xmx3G；BE mem_limit 30%；全部在 /opt/doris（不入 /data）
+- 同机共存：MySQL 5.7（/data/mysql_57）+ 3 个看板 + xtrabackup
 - JDK：Corretto 17（yum 无 java-17，用压缩包）
 - 踩坑：<SELinux / 端口 / 副本数 / 其他>
 - 验证：frontends 三项 true；backends Alive=true；demo.t1 3 行
-- 结论：能跑通实验；受限于 43G 磁盘与 16G 内存，不放业务数据
+- 结论：能跑通实验；受限于根分区 41G 与 16G 内存，不放业务数据
 ```
