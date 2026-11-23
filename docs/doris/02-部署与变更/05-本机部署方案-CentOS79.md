@@ -125,6 +125,29 @@ scp apache-doris-4.0.8-bin-x64.tar.gz doris@<跳板机>:/opt/doris/soft/
 | FE/BE 日志 | 1–2 G | 定期清理 `log/` |
 | 合计 | 约 22 G | 留 19 G 给系统和 3 个看板 |
 
+### 0.4 先把 3.8 G 的包挂到后台下载（建议第一步就做）
+
+包有 3.8 G，跨境/内网带宽下可能要 20–60 分钟。**先挂后台，再去执行第 1、2 节**，不要站着等。
+
+```bash
+mkdir -p /opt/doris/soft
+cd /opt/doris/soft
+nohup wget -c https://apache-doris-releases.oss-accelerate.aliyuncs.com/apache-doris-4.0.8-bin-x64.tar.gz > wget.log 2>&1 &
+sleep 5
+tail -3 wget.log                  # 期望：出现 3.8G 和百分比（如 3%）
+ls -lh /opt/doris/soft/          # 隔几分钟再看一次，文件应该在变大
+```
+
+**判断下载正常**：`ls -lh` 里的字节数持续增长，`tail wget.log` 显示 `%` 和剩余时间。
+
+**断了怎么办**：重新执行同一条 `nohup wget -c ...`，`-c` 会从断点续传，不会从头开始。
+
+**下完的标志**：`tail -2 wget.log` 出现 `100%` / `saved`，文件正好 3.8 G。这时才做第 3 节的 sha512 校验。
+
+::: tip 不用先改目录属主
+1.5 节的 `chown -R doris:doris /opt/doris` 会把正在下载的包一起改掉属主，不影响下载，不用提前处理。
+:::
+
 ---
 
 ## 1. 系统准备（这台机器专属）
@@ -242,8 +265,13 @@ curl -L -o /opt/doris/soft/temurin17.tar.gz "https://api.adoptium.net/v3/binary/
 
 ## 3. 下载、校验、解压 Doris
 
+::: tip 如果已按 0.4 节挂在后台下载
+先 `tail -2 /opt/doris/soft/wget.log` 确认已经到 `100%`。下完了就**只补下 sha512 文件**，跳过第一条 wget。
+:::
+
 ```bash
 cd /opt/doris/soft
+# 已按 0.4 下完就跳过这一行
 wget -c https://apache-doris-releases.oss-accelerate.aliyuncs.com/apache-doris-4.0.8-bin-x64.tar.gz
 wget -c https://apache-doris-releases.oss-accelerate.aliyuncs.com/apache-doris-4.0.8-bin-x64.tar.gz.sha512
 
