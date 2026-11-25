@@ -221,13 +221,36 @@ echo '* soft nofile 1000000' >> /etc/security/limits.conf
 echo '* hard nofile 1000000' >> /etc/security/limits.conf
 ```
 
+**让 THP 重启后依然生效**（否则机器一重启就回到 `always`）：
+
+```bash
+echo 'echo madvise > /sys/kernel/mm/transparent_hugepage/enabled' >> /etc/rc.d/rc.local
+echo 'echo madvise > /sys/kernel/mm/transparent_hugepage/defrag' >> /etc/rc.d/rc.local
+chmod +x /etc/rc.d/rc.local
+```
+
 **验证（必须新开一个 SSH 会话再查）**：
 
 ```bash
-free -h | grep Swap      # 期望：0
-ulimit -n                # 期望：1000000，若还是 1024 就是没重登
+free -h | grep Swap      # 期望：0B
+ulimit -n                # 期望：1000000
 cat /sys/kernel/mm/transparent_hugepage/enabled   # 期望：[madvise]
 ```
+
+::: warning ulimit 只到 65536？不是没重登，是 systemd 的天花板
+CentOS 7 的 sshd 由 systemd 拉起，默认 `LimitNOFILE=65536`，`limits.conf` 里的 1000000 会被这个天花板压住，重登多少次都是 65536。
+
+```bash
+systemctl show sshd -p LimitNOFILE          # 若是 65536:65536 就是它
+mkdir -p /etc/systemd/system/sshd.service.d
+printf '[Service]\nLimitNOFILE=1000000\n' > /etc/systemd/system/sshd.service.d/limits.conf
+systemctl daemon-reload
+systemctl restart sshd                       # 不会断当前连接
+cat /proc/sys/fs/nr_open                     # 期望 1048576（小于此值，名字改小）
+```
+
+退出重登后再 `ulimit -n`。root 会话放开后，`su - doris` 才能继承到 1000000。
+:::
 
 ### 1.4 时间同步
 
@@ -456,7 +479,7 @@ SET PASSWORD = PASSWORD('Doris@2026#Uat');
 | 8 | **`priority_networks` 写成 IP 而不是网段** | BE 永远注册不上 | 写 `192.168.16.0/24` |
 | 9 | **建表忘写副本数 1** | `Failed to find enough host` | 所有建表语句加 `PROPERTIES("replication_num"="1")` |
 | 10 | **用 root 跑 Doris** | 文件权限锁死，升级/迁移时各种 Permission denied | 建 `doris` 用户，`chown -R doris:doris` |
-| 11 | **`ulimit -n` 不生效** | 表一多就 `Too many open files` | 必须**重新登录**再 `ulimit -n` 验证 1000000 |
+| 11 | **`ulimit -n` 不生效** | 表一多就 `Too many open files` | 两个原因：①没重新登录；②CentOS 7 的 sshd 被 systemd 限在 65536，按 1.3 节 warning 块改 `sshd.service.d` |
 | 12 | **当生产环境用** | 单机单副本、无高可用，机器挂=数据没了 | 这台只做学习验证；生产至少 3 BE + 3 FE，数据盘 SSD、独立机器 |
 
 ---
