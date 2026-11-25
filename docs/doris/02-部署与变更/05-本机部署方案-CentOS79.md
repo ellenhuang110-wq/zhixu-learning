@@ -178,11 +178,31 @@ yum clean all && yum makecache
 
 ### 1.2 关 SELinux 与防火墙（测试机）
 
+先看现状，**已经关掉的项直接跳过**：
+
 ```bash
+getenforce                        # Enforcing / Permissive / Disabled
+systemctl is-active firewalld     # active / inactive
+systemctl is-enabled firewalld    # enabled / disabled
+```
+
+| 现状 | 要做什么 |
+|---|---|
+| `firewalld` = `inactive` + `disabled` | **跳过防火墙两条**（本机 2026-11-25 就是这种，无需重复关） |
+| `getenforce` = `Enforcing` | 执行下面 SELinux 两步 |
+| `getenforce` = `Permissive` / `Disabled` | 跳过 SELinux |
+
+```bash
+# 只有 getenforce 显示 Enforcing 才执行
 setenforce 0
 sed -i 's/^SELINUX=enforcing/SELINUX=permissive/' /etc/selinux/config
-systemctl stop firewalld && systemctl disable firewalld
 getenforce        # 期望：Permissive
+grep ^SELINUX= /etc/selinux/config
+```
+
+```bash
+# 只有 firewalld 还在 active 时才执行
+systemctl stop firewalld && systemctl disable firewalld
 ```
 
 **为什么这台机必须关 SELinux**：CentOS 7 默认 `Enforcing`，BE 读写 `/opt/doris/storage` 会被拦，表现为"进程起了但 Alive=false，日志里没明显错误"——这是这台机器最隐蔽的雷。
