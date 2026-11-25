@@ -252,6 +252,16 @@ cat /proc/sys/fs/nr_open                     # 期望 1048576（小于此值，�
 退出重登后再 `ulimit -n`。root 会话放开后，`su - doris` 才能继承到 1000000。
 :::
 
+::: tip 实验环境可以跳过这一步（本机已踩到）
+本机实测：`limits.conf` 开头就有一组基线配置 `* soft/hard nofile 65536`，后面追加的 `1000000` 不生效；`sshd` 自身只有 `1024/4096`。真正的天花板大概率在内核参数 `fs.nr_open`：
+
+```bash
+cat /proc/sys/fs/nr_open      # 若为 65536，就是它卡住了
+```
+
+如果是 65536，改 `limits.conf` 和 sshd 都没用，必须改 `fs.nr_open`（影响全局，生产需评估）。**单机实验用 65536 不会成为瓶颈**：Doris 启动脚本只会打印 WARN，不会拒绝启动。建议先跳过，只有 BE 日志出现 `Too many open files` 时再回来调。
+:::
+
 ### 1.4 时间同步
 
 ```bash
