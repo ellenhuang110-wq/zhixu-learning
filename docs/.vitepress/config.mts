@@ -32,16 +32,38 @@ const topicDocs = [
   ['03-自检清单', '自检清单'],
 ]
 
-// 生成主题侧边栏分组
+// 主题下的补充页面（不在四件套里）：key 用 `base/目录名`，避免 pgsql / clickhouse 误匹配
+const topicExtras: Record<string, { text: string; file: string }[]> = {
+  'doris/02-部署与变更': [
+    { text: '部署照做清单 · 1FE+1BE', file: '04-安装部署照做清单' },
+    { text: '本机部署方案 · CentOS7.9', file: '05-本机部署方案-CentOS79' },
+    { text: '安装复盘 · 踩坑记录', file: '06-本次安装复盘与避坑' },
+  ],
+  'doris/05-账号与安全': [
+    { text: '权限管理照做清单', file: '04-权限管理实操' },
+  ],
+}
+
+// 生成主题侧边栏分组（四件套 + 该主题的补充页面）
 function topicSections(base: string, topics: string[][]) {
-  return topics.map(([dir, label]) => ({
-    text: label,
-    collapsed: true,
-    items: topicDocs.map(([file, docLabel]) => ({
-      text: docLabel,
-      link: `/${base}/${dir}/${file}`,
-    })),
-  }))
+  return topics.map(([dir, label]) => {
+    const extras = topicExtras[`${base}/${dir}`] ?? []
+    return {
+      text: label,
+      // 有补充页面的主题（部署、安全）默认展开，其余折叠
+      collapsed: extras.length === 0,
+      items: [
+        ...topicDocs.map(([file, docLabel]) => ({
+          text: docLabel,
+          link: `/${base}/${dir}/${file}`,
+        })),
+        ...extras.map(({ text, file }) => ({
+          text,
+          link: `/${base}/${dir}/${file}`,
+        })),
+      ],
+    }
+  })
 }
 
 // 部署到 GitHub Pages 时自动适配路径：
@@ -108,10 +130,6 @@ export default defineConfig({
       '/doris/': [
         { text: '零基础原理课 · 从这里开始', link: '/learn/01-database' },
         { text: '完整知识地图', link: '/doris/00-知识地图' },
-        { text: '部署照做清单 · 零基础 1FE+1BE', link: '/doris/02-部署与变更/04-安装部署照做清单' },
-        { text: '本机部署方案 · CentOS7.9 / 192.168.16.24', link: '/doris/02-部署与变更/05-本机部署方案-CentOS79' },
-        { text: '安装复盘 · 这次踩了哪些坑（已装成功）', link: '/doris/02-部署与变更/06-本次安装复盘与避坑' },
-        { text: '权限管理照做清单 · 生产可用', link: '/doris/05-账号与安全/04-权限管理实操' },
         ...topicSections('doris', dorisTopics),
       ],
       '/vector/': [
