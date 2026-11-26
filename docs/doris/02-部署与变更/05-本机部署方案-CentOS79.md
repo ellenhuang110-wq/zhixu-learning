@@ -405,6 +405,7 @@ grep -nE '^(JAVA_HOME|JAVA_OPTS|meta_dir|priority_networks|lower_case_table_name
 ### 4.2 启动并验证
 
 ```bash
+whoami                                    # 必须是 doris，不是 root
 cd /opt/doris/apache-doris-4.0.8-bin-x64/fe
 bin/start_fe.sh --daemon
 sleep 5
@@ -528,6 +529,7 @@ ALTER SYSTEM ADD BACKEND "192.168.16.24:9050";
 ### 5.3 启动 BE 并验证
 
 ```bash
+whoami                                    # 必须是 doris，不是 root
 cd /opt/doris/apache-doris-4.0.8-bin-x64/be
 bin/start_be.sh --daemon
 sleep 10
@@ -610,7 +612,7 @@ SHOW BACKENDS\G       -- Version: doris-4.0.8-rc02-bc8ea1bac6d
 | 7b | **动了 `/data/mysql_57`** | MySQL 直接挂，UAT 库没得救 | 只读不写；不要把 Doris 的 `storage_root_path` 指到任何 `mysql` 相关目录 |
 | 8 | **`priority_networks` 写成 IP 而不是网段** | BE 永远注册不上 | 写 `192.168.16.0/24` |
 | 9 | **建表忘写副本数 1** | `Failed to find enough host` | 所有建表语句加 `PROPERTIES("replication_num"="1")` |
-| 10 | **用 root 跑 Doris** | 文件权限锁死，升级/迁移时各种 Permission denied | 建 `doris` 用户，`chown -R doris:doris` |
+| 10 | **用 root 跑 Doris** | 进程写入的文件属主变成 root，以后换 doris 启动直接起不来；升级/备份到处 Permission denied；还有安全风险 | 建 `doris` 用户；**已经用 root 起过的**：脚本停服务 → `chown -R doris:doris /opt/doris` → 换 doris 重启（见 [复盘坑 7](/doris/02-部署与变更/06-本次安装复盘与避坑)） |
 | 11 | **`ulimit -n` 不生效** | 表一多就 `Too many open files` | 两个原因：①没重新登录；②CentOS 7 的 sshd 被 systemd 限在 65536，按 1.3 节 warning 块改 `sshd.service.d` |
 | 12 | **当生产环境用** | 单机单副本、无高可用，机器挂=数据没了 | 这台只做学习验证；生产至少 3 BE + 3 FE，数据盘 SSD、独立机器 |
 
