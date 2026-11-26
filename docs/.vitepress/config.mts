@@ -110,6 +110,7 @@ export default defineConfig({
         { text: '完整知识地图', link: '/doris/00-知识地图' },
         { text: '部署照做清单 · 零基础 1FE+1BE', link: '/doris/02-部署与变更/04-安装部署照做清单' },
         { text: '本机部署方案 · CentOS7.9 / 192.168.16.24', link: '/doris/02-部署与变更/05-本机部署方案-CentOS79' },
+        { text: '安装复盘 · 这次踩了哪些坑（已装成功）', link: '/doris/02-部署与变更/06-本次安装复盘与避坑' },
         { text: '权限管理照做清单 · 生产可用', link: '/doris/05-账号与安全/04-权限管理实操' },
         ...topicSections('doris', dorisTopics),
       ],
