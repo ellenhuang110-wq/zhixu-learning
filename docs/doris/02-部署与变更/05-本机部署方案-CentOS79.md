@@ -437,7 +437,7 @@ mysql --no-defaults -uroot -P9030 -h192.168.16.24
 同机既有 MySQL 5.7（3306）又有 Doris FE（9030）。少写一个 `-P9030`，命令就打到 MySQL 上了——`ALTER SYSTEM` 会报语法错（无害），但 `DROP DATABASE` 之类就是事故。建议加个别名：
 
 ```bash
-echo "alias doris='mysql --no-defaults -uroot -h192.168.16.24 -P9030'" >> ~/.bashrc
+echo "alias doris='mysql --no-defaults -uroot -p -h192.168.16.24 -P9030'" >> ~/.bashrc
 source ~/.bashrc
 doris            # 以后用它进 Doris
 ```
@@ -570,6 +570,29 @@ SET PASSWORD = PASSWORD('Doris@2026#Uat');
 **为什么必须写 `replication_num = "1"`**：默认副本数是 3，你只有 1 个 BE，会直接报 `Failed to find enough host with storage medium and tag`。看到这个报错不是集群坏了。
 
 **收工标准**：`SHOW FRONTENDS` 三项全 true + `SHOW BACKENDS` Alive=true + `demo.t1` 查出 3 行 + root 密码已改。
+
+### 6.1 本机实测结果（2026-11-26，已通过）
+
+| 检查 | 实测 |
+|---|---|
+| SHOW FRONTENDS | Alive / Join / IsMaster 全 true，Role FOLLOWER，`doris-4.0.8-rc02` |
+| SHOW BACKENDS | Alive true，TabletNum 22，NodeRole `mix`，CpuCores 8，Memory 15.51 GB |
+| 磁盘 | Total 46.969 GB / Avail 31.091 GB / UsedPct 33.81% —— 这就是根分区，**证实 Doris 数据与 `/data` 的 MySQL 完全分开** |
+| demo.t1 | 插入 3 行 `status: VISIBLE`，查询结果正确 |
+| root 密码 | 已改为 `Doris@2026#Uat`，后续连接要带 `-p` |
+
+::: tip `SELECT version()` 为什么返回 5.7.99
+Doris 的 MySQL 协议层**固定伪装成 `5.7.99`**，目的是让 JDBC、BI 工具、各类 MySQL 客户端按 MySQL 5.7 特性工作（StarRocks 也做过同类处理）。它不表示你连了 MySQL，也不是 Doris 的版本号。
+
+查真实版本：
+
+```sql
+SHOW FRONTENDS\G      -- Version: doris-4.0.8-rc02-bc8ea1bac6d
+SHOW BACKENDS\G       -- Version: doris-4.0.8-rc02-bc8ea1bac6d
+```
+
+`NodeRole: mix` 表示这个 BE 是存算一体节点（同时负责存储和计算），单机部署就是 mix，正常。
+:::
 
 ---
 
