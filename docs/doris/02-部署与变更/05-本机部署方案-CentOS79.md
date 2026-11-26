@@ -414,12 +414,36 @@ tail -n 30 log/fe.out
 
 **期望**：9030、8030 都在监听；`fe.out` 里没有 `Exception`。
 
-### 4.3 装客户端、连接、看状态
+### 4.3 连接 FE 并查看状态
+
+**先看有没有 mysql 客户端**（这台机本来就带 MySQL 5.7 的客户端，不需要再装，也不要装第二套）：
 
 ```bash
-yum install -y mariadb        # 提供 mysql 命令
-mysql -uroot -P9030 -h192.168.16.24
+which mysql && mysql --version
 ```
+
+| 结果 | 动作 |
+|---|---|
+| 有（如 `mysql  Ver 14.14 Distrib 5.7.xx`） | **跳过安装**，直接用 |
+| 没有 | `yum install -y mariadb` |
+
+```bash
+# --no-defaults 必须在第一个参数的位置：否则客户端会读 /etc/my.cnf，
+# 把操作日志写进 /data/mysql_57/tmp/（那是 MySQL 的目录，别污染）
+mysql --no-defaults -uroot -P9030 -h192.168.16.24
+```
+
+::: warning 这台机器上 `mysql` 默认连的是本地 MySQL 3306
+同机既有 MySQL 5.7（3306）又有 Doris FE（9030）。少写一个 `-P9030`，命令就打到 MySQL 上了——`ALTER SYSTEM` 会报语法错（无害），但 `DROP DATABASE` 之类就是事故。建议加个别名：
+
+```bash
+echo "alias doris='mysql --no-defaults -uroot -h192.168.16.24 -P9030'" >> ~/.bashrc
+source ~/.bashrc
+doris            # 以后用它进 Doris
+```
+
+连上后看到的 `Server version: 5.7.99` 是 Doris 伪装的 MySQL 协议版本，不是连错；`SHOW FRONTENDS` 里的 `Version: doris-4.0.8-...` 才是真实版本。
+:::
 
 ```sql
 SHOW FRONTENDS\G
@@ -446,6 +470,45 @@ JAVA_HOME = /usr/local/jdk17
 priority_networks = 192.168.16.0/24
 storage_root_path = /opt/doris/storage,medium:HDD
 mem_limit = 30%
+```
+
+**be.conf 同样不要整段追加，先看现状**：
+
+```bash
+cd /opt/doris/apache-doris-4.0.8-bin-x64/be/conf
+cp -a be.conf be.conf.bak
+grep -nE '^\s*#?\s*(JAVA_HOME|priority_networks|storage_root_path|mem_limit)' be.conf
+```
+
+| 参数 | 常见默认形态 | 处理 |
+|---|---|---|
+| `storage_root_path` | `storage_root_path = ${DORIS_HOME}/storage,medium:HDD` | **改整行**为 `/opt/doris/storage,medium:HDD` |
+| `priority_networks` | `# priority_networks =` | 去注释并写网段 |
+| `mem_limit` | `# mem_limit = 80%` | 去注释改为 `30%` |
+| `JAVA_HOME` | `JAVA_HOME = ${JAVA_HOME}` 或注释 | 改/去注释为 `/usr/local/jdk17` |
+
+幂等命令（注释行和未注释行都能处理）：
+
+```bash
+cd /opt/doris/apache-doris-4.0.8-bin-x64/be/conf
+sed -i 's|^#\s*JAVA_HOME\s*=.*|JAVA_HOME = /usr/local/jdk17|' be.conf
+sed -i 's|^JAVA_HOME\s*=.*|JAVA_HOME = /usr/local/jdk17|' be.conf
+sed -i 's|^#\s*priority_networks\s*=.*|priority_networks = 192.168.16.0/24|' be.conf
+sed -i 's|^priority_networks\s*=.*|priority_networks = 192.168.16.0/24|' be.conf
+sed -i 's|^#\s*storage_root_path\s*=.*|storage_root_path = /opt/doris/storage,medium:HDD|' be.conf
+sed -i 's|^storage_root_path\s*=.*|storage_root_path = /opt/doris/storage,medium:HDD|' be.conf
+sed -i 's|^#\s*mem_limit\s*=.*|mem_limit = 30%|' be.conf
+sed -i 's|^mem_limit\s*=.*|mem_limit = 30%|' be.conf
+grep -q '^storage_root_path' be.conf || echo 'storage_root_path = /opt/doris/storage,medium:HDD' >> be.conf
+grep -q '^mem_limit' be.conf || echo 'mem_limit = 30%' >> be.conf
+grep -q '^priority_networks' be.conf || echo 'priority_networks = 192.168.16.0/24' >> be.conf
+grep -q '^JAVA_HOME' be.conf || echo 'JAVA_HOME = /usr/local/jdk17' >> be.conf
+```
+
+**验证**：
+
+```bash
+grep -nE '^(JAVA_HOME|priority_networks|storage_root_path|mem_limit)' be.conf
 ```
 
 `mem_limit = 30%`（约 4.8 G）是这台 16 G 机器的关键：BE 默认按 80% 吃内存（约 12.8 G），加上 FE 3 G 和 MySQL，机器会被撑满，看板或 mysqld 会被 OOM 掉。
