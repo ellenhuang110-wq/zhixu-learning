@@ -360,6 +360,42 @@ lower_case_table_names = 1
 JAVA_OPTS = -Xmx3072m -XX:+UseG1GC
 ```
 
+**不要整段粘到文件末尾。先看现状，再决定是改还是加**：
+
+```bash
+cd /opt/doris/apache-doris-4.0.8-bin-x64/fe/conf
+cp -a fe.conf fe.conf.bak
+grep -nE '^\s*#?\s*(JAVA_HOME|JAVA_OPTS|meta_dir|priority_networks|lower_case_table_names)' fe.conf
+```
+
+| 输出形态 | 说明 | 怎么处理 |
+|---|---|---|
+| `JAVA_HOME = ${JAVA_HOME}` | 已有行，值是占位符 | **改这一行**为 `/usr/local/jdk17` |
+| `JAVA_OPTS = -Xmx4096m -XX:+UseG1GC ...` | 已有行，后面还跟着一堆参数 | **只改 `-Xmx` 的数字**，不能整行替换，否则会丢掉原有 JVM 参数 |
+| `# meta_dir = ...` / `# priority_networks = ...` | 注释行 | **去注释并改值** |
+| 完全没输出（如 `lower_case_table_names`） | 不存在 | **追加一行** |
+
+下面这组命令幂等（可重复执行），已经帮你处理了上述三种情况：
+
+```bash
+cd /opt/doris/apache-doris-4.0.8-bin-x64/fe/conf
+sed -i 's|^JAVA_HOME\s*=.*|JAVA_HOME = /usr/local/jdk17|' fe.conf
+sed -i 's/-Xmx[0-9]\+m/-Xmx3072m/' fe.conf
+sed -i 's|^#\s*meta_dir\s*=.*|meta_dir = /opt/doris/meta|' fe.conf
+sed -i 's|^#\s*priority_networks\s*=.*|priority_networks = 192.168.16.0/24|' fe.conf
+sed -i 's|^#\s*lower_case_table_names\s*=.*|lower_case_table_names = 1|' fe.conf
+grep -q '^JAVA_HOME' fe.conf || echo 'JAVA_HOME = /usr/local/jdk17' >> fe.conf
+grep -q '^meta_dir' fe.conf || echo 'meta_dir = /opt/doris/meta' >> fe.conf
+grep -q '^priority_networks' fe.conf || echo 'priority_networks = 192.168.16.0/24' >> fe.conf
+grep -q '^lower_case_table_names' fe.conf || echo 'lower_case_table_names = 1' >> fe.conf
+```
+
+**验证（应该正好 5 行生效，没有重复）**：
+
+```bash
+grep -nE '^(JAVA_HOME|JAVA_OPTS|meta_dir|priority_networks|lower_case_table_names)' fe.conf
+```
+
 ::: warning 三个不能写错的地方
 1. `priority_networks` 写 **`192.168.16.0/24`**，不是 `192.168.16.24/24`，也不是 `24.0`——要的是**网段**；
 2. `JAVA_OPTS` 要在**原有那一行上改**，不要新增第二行（`fe.conf` 里本来就有这行，`grep -n JAVA_OPTS conf/fe.conf` 确认只剩一条）；
